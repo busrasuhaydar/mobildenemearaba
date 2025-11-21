@@ -236,6 +236,8 @@
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         const isTablet = /iPad|Android/i.test(navigator.userAgent) && window.innerWidth >= 768;
         const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isIPhone = /iPhone/i.test(navigator.userAgent);
+        const isAndroidPhone = /Android/i.test(navigator.userAgent) && !isTablet;
         
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 4000);
@@ -631,7 +633,29 @@
 
         // 📱 MOBİL HAFIZA YÖNETİMİ - Sadece aktif texture'ları yükle!
         let activeTextureIndices = new Set();
-        const MAX_LOADED_TEXTURES = isMobile ? 5 : 50;  // 📱 Mobilde MAX 5 texture (ultra optimized)!
+        // 📱 iPhone/Android Phone: 3 texture, Tablet: 5 texture, Desktop: 50 texture
+        const MAX_LOADED_TEXTURES = (isIPhone || isAndroidPhone) ? 3 : (isTablet ? 5 : 50);
+        let textureDisposeQueue = [];  // Dispose edilecek texture'lar
+
+        // 🔄 SMART TEXTURE ROTATION - Kullanılan texture'ları dispose et, yenilerini yükle!
+        function disposeOldestTexture() {
+            if (activeTextureIndices.size <= MAX_LOADED_TEXTURES) return;
+
+            // En eski texture'ı bul ve dispose et
+            const oldestIndex = Array.from(activeTextureIndices)[0];
+            const prefix = oldestIndex.charAt(0);
+            const index = parseInt(oldestIndex.substring(1));
+
+            if (prefix === 'u' && universeTextures[index]) {
+                universeTextures[index].dispose();
+                universeTextures[index] = null;
+                activeTextureIndices.delete(oldestIndex);
+            } else if (prefix === 'p' && pourTextures[index]) {
+                pourTextures[index].dispose();
+                pourTextures[index] = null;
+                activeTextureIndices.delete(oldestIndex);
+            }
+        }
         
         function loadFluidTextures() {
             
@@ -738,11 +762,14 @@
         }
         
         function loadUniverseTexture(index) {
+            // 🔄 SMART DISPOSE: Limit doluysa en eski texture'ı dispose et!
             if (activeTextureIndices.size >= MAX_LOADED_TEXTURES) {
-                setTimeout(() => loadUniverseTexture(index), 1000);
-                return;
+                disposeOldestTexture();
             }
-            
+
+            // Texture zaten yüklüyse skip
+            if (universeTextures[index]) return;
+
             textureLoader.load(UNIVERSE_TEXTURE_URLS[index], (texture) => {
                 texture.encoding = THREE.sRGBEncoding;
                 texture.wrapS = THREE.MirroredRepeatWrapping;
@@ -751,7 +778,7 @@
                 texture.magFilter = THREE.LinearFilter;
                 texture.anisotropy = 1;
                 texture.generateMipmaps = false;
-                
+
                 universeTextures[index] = texture;
                 activeTextureIndices.add('u' + index);
 
@@ -820,7 +847,12 @@
         function getRandomUniverseIndex() {
             // 🎯 MASTER QUEUE'dan sıradaki texture'ı al!
             let nextIndex = masterUniverseQueue[universeQueuePosition];
-            
+
+            // 🔄 SMART PRELOAD: Yeni texture'ı şimdiden yükle!
+            if (!universeTextures[nextIndex] && isMobile) {
+                loadUniverseTexture(nextIndex);
+            }
+
             // 📱 Texture yüklenmemişse bir sonrakini dene!
             let attempts = 0;
             while (!universeTextures[nextIndex] && attempts < masterUniverseQueue.length) {
@@ -830,17 +862,23 @@
                     masterUniverseQueue = shuffleArray(masterUniverseQueue);
                 }
                 nextIndex = masterUniverseQueue[universeQueuePosition];
+
+                // Yeni texture'ı yükle
+                if (!universeTextures[nextIndex] && isMobile) {
+                    loadUniverseTexture(nextIndex);
+                }
+
                 attempts++;
             }
-            
+
             universeQueuePosition++;
-            
+
             // 🔄 Queue bittiyse başa dön + YENİDEN SHUFFLE!
             if (universeQueuePosition >= masterUniverseQueue.length) {
                 universeQueuePosition = 0;
                 masterUniverseQueue = shuffleArray(masterUniverseQueue);
             }
-            
+
             return nextIndex;
         }
         
@@ -881,7 +919,9 @@
             // 📱 İlk pour texture
             currentPourIndex = masterPourQueue[0];
 
-            const skyboxGeometry = new THREE.SphereGeometry(3000, isMobile ? 32 : 128, isMobile ? 32 : 128);  // 📱 Mobilde 32 segment = ultra performans!
+            // 📱 iPhone: 24 segment, Tablet: 32 segment, Desktop: 128 segment
+            const skyboxSegments = (isIPhone || isAndroidPhone) ? 24 : (isTablet ? 32 : 128);
+            const skyboxGeometry = new THREE.SphereGeometry(3000, skyboxSegments, skyboxSegments);
             
             fluidMaterial = new THREE.ShaderMaterial({
                 uniforms: {
@@ -913,7 +953,17 @@
             cycleStartTime = Date.now();
             lastSkyboxChange = Date.now();
             lastPourTextureChange = Date.now();
-            
+
+            // 🪞 MOBİLDE: Aynaların envMap'ine skybox texture'ını ata!
+            if (isMobile && universeTextures[currentUniverseIndex]) {
+                mirrorMeshes.forEach(mirrorMesh => {
+                    if (mirrorMesh.userData.isMobileMirror && mirrorMesh.material) {
+                        mirrorMesh.material.envMap = universeTextures[currentUniverseIndex];
+                        mirrorMesh.material.needsUpdate = true;
+                    }
+                });
+            }
+
             // 📱 Skybox yüklendi!
             assetsLoaded.skybox = true;
             checkAllLoaded();
@@ -1005,7 +1055,17 @@
                     currentUniverseIndex = nextUniverseIndex;
                     fluidMaterial.uniforms.uTexture.value = universeTextures[currentUniverseIndex];
                     fluidMaterial.uniforms.uIsTransitioning.value = false;
-                    
+
+                    // 🪞 MOBİLDE: Aynaların envMap'ini yeni skybox texture'ı ile güncelle!
+                    if (isMobile && universeTextures[currentUniverseIndex]) {
+                        mirrorMeshes.forEach(mirrorMesh => {
+                            if (mirrorMesh.userData.isMobileMirror && mirrorMesh.material) {
+                                mirrorMesh.material.envMap = universeTextures[currentUniverseIndex];
+                                mirrorMesh.material.needsUpdate = true;
+                            }
+                        });
+                    }
+
                     // 🌌 ENVIRONMENT MAP GÜNCELLE!
                     updateEnvironmentMap();
                 }
@@ -2031,15 +2091,22 @@
                                     mirrorMesh = child;
                                 }
                                 
+                                // 🪞 AYNALARIN YANSIMASI
                                 const mirrorMaterial = new THREE.MeshBasicMaterial({
-                                    envMap: cubeRenderTarget.texture,
+                                    envMap: isMobile ? null : cubeRenderTarget.texture,  // Mobilde null, sonra skybox texture set edilecek
                                     reflectivity: 1.0,
                                     refractionRatio: 0.98,
                                     combine: THREE.MixOperation,
-                                    side: THREE.DoubleSide
+                                    side: THREE.DoubleSide,
+                                    color: isMobile ? 0xffffff : 0xffffff  // Mobilde beyaz, skybox reflection için
                                 });
-                                
+
                                 child.material = mirrorMaterial;
+
+                                // 📱 MOBİLDE: Skybox texture'ı yüklendikten sonra aynaların envMap'ine ata!
+                                if (isMobile) {
+                                    child.userData.isMobileMirror = true;  // Flag ekle
+                                }
                                 child.castShadow = false;
                                 child.receiveShadow = false;
                                 
@@ -2242,15 +2309,21 @@
         };
 
         function setupControls() {
-            // 📱 TABLET/iPAD KONTROL GÖRÜNÜRLÜĞÜ - Touch cihazlarda kesinlikle göster!
-            if (hasTouch || isMobile) {
-                const cameraBtn = document.getElementById('cameraBtn');
-                const steeringPad = document.getElementById('steeringPad');
-                const accelPad = document.getElementById('accelPad');
+            // 📱 MOBIL/TABLET KONTROL GÖRÜNÜRLÜĞÜ - Sadece touch cihazlarda göster!
+            const cameraBtn = document.getElementById('cameraBtn');
+            const steeringPad = document.getElementById('steeringPad');
+            const accelPad = document.getElementById('accelPad');
 
+            if (isMobile || hasTouch) {
+                // Mobil/tablet: Kontrolleri göster
                 if (cameraBtn) cameraBtn.style.display = 'flex';
                 if (steeringPad) steeringPad.style.display = 'block';
                 if (accelPad) accelPad.style.display = 'block';
+            } else {
+                // Desktop: Kontrolleri gizle
+                if (cameraBtn) cameraBtn.style.display = 'none';
+                if (steeringPad) steeringPad.style.display = 'none';
+                if (accelPad) accelPad.style.display = 'none';
             }
 
             // 🥽 VR OTOMATİK ALGILAMA - Sadece VR varsa göster!
@@ -2708,15 +2781,17 @@
         // 📱 HAFIZA İZLEME VE TEMİZLİK SİSTEMİ
         let lastMemoryCheck = Date.now();
         function checkMemory() {
-            // Her 5 saniyede bir hafıza kontrolü
-            if (Date.now() - lastMemoryCheck > 5000) {
+            // 📱 iPhone/Android: Her 3 saniyede bir, diğerleri: Her 5 saniyede bir
+            const checkInterval = (isIPhone || isAndroidPhone) ? 3000 : 5000;
+
+            if (Date.now() - lastMemoryCheck > checkInterval) {
                 lastMemoryCheck = Date.now();
-                
+
                 // Renderer'ı temizle
                 if (renderer.info) {
                     renderer.info.reset();
                 }
-                
+
                 // 📱 MOBİL: Kullanılmayan texture'ları temizle
                 if (isMobile && activeTextureIndices.size > MAX_LOADED_TEXTURES) {
                     // En eski texture'ları bul ve temizle
@@ -2783,18 +2858,24 @@
         }
 
         let frameCounter = 0;
+        // 📱 iPhone için render frequency kontrolü
+        const renderFrequency = (isIPhone || isAndroidPhone) ? 2 : 1;  // iPhone/Android: Her 2 frame, diğerleri: Her frame
+
         function animate() {
             requestAnimationFrame(animate);
             frameCounter++;
-            
+
+            // 📱 AKILLI RENDER - iPhone'da her 2 frame'de bir render et!
+            const shouldRender = frameCounter % renderFrequency === 0;
+
             // 📱 Her 300 frame'de hafıza kontrolü (5 saniye)
             if (frameCounter % 300 === 0) {
                 checkMemory();
             }
-            
+
             // ============ YENİ: AKIŞKAN SKYBOX GÜNCELLE ============
             updateFluidSkybox();
-            
+
             updateCar();
             updateCamera();
             
@@ -2869,8 +2950,11 @@
                 mirrorMeshes.forEach(mesh => mesh.visible = true);
                 if (car) car.visible = true;
             }
-            
-            renderer.render(scene, camera);
+
+            // 🎯 RENDER - iPhone'da sadece belirli frame'lerde!
+            if (shouldRender) {
+                renderer.render(scene, camera);
+            }
         }
 
         animate();
