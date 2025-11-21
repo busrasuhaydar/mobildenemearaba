@@ -178,25 +178,31 @@
             background: rgba(100, 255, 100, 0.3);
             border-color: rgba(100, 255, 100, 0.5);
         }
-        
-        /* Desktop'ta kontrolleri gizle - TABLET/iPAD İÇİN DÜZELTME! */
-        /* Touch olmayan cihazlarda gizle (hover capability = desktop) */
-        @media (hover: hover) and (pointer: fine) {
-            #cameraBtn, #steeringPad, #accelPad {
-                display: none !important;
+
+        /* 🖥️ DESKTOP: Kontrolleri tamamen gizle */
+        /* Varsayılan: Tüm kontroller gizli */
+        #cameraBtn, #steeringPad, #accelPad {
+            display: none;
+        }
+
+        /* 📱 MOBILE/TABLET: Touch capability varsa göster */
+        /* Touch screen cihazlarda kontroller görünür */
+        @media (pointer: coarse) {
+            #cameraBtn {
+                display: flex !important;
+            }
+            #steeringPad, #accelPad {
+                display: block !important;
             }
         }
 
-        /* Fallback: Tablet/iPad'lerde görünür kalması için */
-        @media (max-width: 1024px) and (orientation: portrait) {
-            #cameraBtn, #steeringPad, #accelPad {
+        /* 📱 Küçük ekranlar için fallback (mobil/tablet) */
+        @media (max-width: 1024px) {
+            #cameraBtn {
                 display: flex !important;
             }
-        }
-
-        @media (max-width: 1366px) and (orientation: landscape) {
-            #cameraBtn, #steeringPad, #accelPad {
-                display: flex !important;
+            #steeringPad, #accelPad {
+                display: block !important;
             }
         }
     </style>
@@ -235,6 +241,8 @@
         // 📱 MOBİL CIHAZ TESPİTİ
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         const isTablet = /iPad|Android/i.test(navigator.userAgent) && window.innerWidth >= 768;
+        const isIPhone = /iPhone/i.test(navigator.userAgent);
+        const isAndroidPhone = /Android/i.test(navigator.userAgent) && !isTablet;
         const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
         
         const scene = new THREE.Scene();
@@ -250,8 +258,8 @@
             alpha: false
         });
         
-        // 📱 OPTIMIZED PIXEL RATIO - Mobilde 1.0 = native çözünürlük, performans dengesi!
-        const pixelRatio = isMobile ? 1.0 : Math.min(window.devicePixelRatio, 2.0);
+        // 📱 OPTIMIZED PIXEL RATIO - iPhone aggressive, diğerleri optimize!
+        const pixelRatio = (isIPhone || isAndroidPhone) ? 1.0 : (isMobile ? 1.0 : Math.min(window.devicePixelRatio, 2.0));
         renderer.setPixelRatio(pixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         
@@ -631,7 +639,8 @@
 
         // 📱 MOBİL HAFIZA YÖNETİMİ - Sadece aktif texture'ları yükle!
         let activeTextureIndices = new Set();
-        const MAX_LOADED_TEXTURES = isMobile ? 5 : 50;  // 📱 Mobilde MAX 5 texture (ultra optimized)!
+        // 📱 iPhone/Android Phone: 3 texture, Tablet: 6 texture, Desktop: 50 texture
+        const MAX_LOADED_TEXTURES = (isIPhone || isAndroidPhone) ? 3 : (isTablet ? 6 : 50);
         
         function loadFluidTextures() {
             
@@ -881,7 +890,9 @@
             // 📱 İlk pour texture
             currentPourIndex = masterPourQueue[0];
 
-            const skyboxGeometry = new THREE.SphereGeometry(3000, isMobile ? 32 : 128, isMobile ? 32 : 128);  // 📱 Mobilde 32 segment = ultra performans!
+            // 📱 iPhone: 24, Android Phone: 24, Tablet: 32, Desktop: 128
+            const skyboxSegments = (isIPhone || isAndroidPhone) ? 24 : (isTablet ? 32 : 128);
+            const skyboxGeometry = new THREE.SphereGeometry(3000, skyboxSegments, skyboxSegments);
             
             fluidMaterial = new THREE.ShaderMaterial({
                 uniforms: {
@@ -913,7 +924,17 @@
             cycleStartTime = Date.now();
             lastSkyboxChange = Date.now();
             lastPourTextureChange = Date.now();
-            
+
+            // 🪞 Mobilde: Aynaların envMap'ini skybox texture ile güncelle
+            if (isMobile && universeTextures[currentUniverseIndex]) {
+                mirrorMeshes.forEach(mirror => {
+                    if (mirror.userData.isMobileMirror && mirror.material) {
+                        mirror.material.envMap = universeTextures[currentUniverseIndex];
+                        mirror.material.needsUpdate = true;
+                    }
+                });
+            }
+
             // 📱 Skybox yüklendi!
             assetsLoaded.skybox = true;
             checkAllLoaded();
@@ -1005,7 +1026,17 @@
                     currentUniverseIndex = nextUniverseIndex;
                     fluidMaterial.uniforms.uTexture.value = universeTextures[currentUniverseIndex];
                     fluidMaterial.uniforms.uIsTransitioning.value = false;
-                    
+
+                    // 🪞 Mobilde: Aynaların envMap'ini yeni skybox ile güncelle
+                    if (isMobile && universeTextures[currentUniverseIndex]) {
+                        mirrorMeshes.forEach(mirror => {
+                            if (mirror.userData.isMobileMirror && mirror.material) {
+                                mirror.material.envMap = universeTextures[currentUniverseIndex];
+                                mirror.material.needsUpdate = true;
+                            }
+                        });
+                    }
+
                     // 🌌 ENVIRONMENT MAP GÜNCELLE!
                     updateEnvironmentMap();
                 }
@@ -1163,7 +1194,8 @@
         let mirrorMeshes = [];
         let mirrorsLoaded = 0;
         let mirrorsCreated = 0;
-        const TOTAL_MIRRORS = isMobile ? 30 : 58;  // 📱 Mobilde 30 ayna = optimal performans!
+        // 📱 iPhone/Android: 25 ayna, Tablet: 35 ayna, Desktop: 58 ayna
+        const TOTAL_MIRRORS = (isIPhone || isAndroidPhone) ? 25 : (isTablet ? 35 : 58);
 
         const roadData = {
             "version": "10.0",
@@ -2032,17 +2064,22 @@
                                 }
                                 
                                 const mirrorMaterial = new THREE.MeshBasicMaterial({
-                                    envMap: cubeRenderTarget.texture,
+                                    envMap: isMobile ? null : cubeRenderTarget.texture,  // Mobilde sonra set edilecek
                                     reflectivity: 1.0,
                                     refractionRatio: 0.98,
                                     combine: THREE.MixOperation,
                                     side: THREE.DoubleSide
                                 });
-                                
+
                                 child.material = mirrorMaterial;
                                 child.castShadow = false;
                                 child.receiveShadow = false;
-                                
+
+                                // 📱 Mobilde: Skybox texture'ını aynaya bağlamak için flag
+                                if (isMobile) {
+                                    child.userData.isMobileMirror = true;
+                                }
+
                                 mirrorMeshes.push(child);
                             }
                         });
