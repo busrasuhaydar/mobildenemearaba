@@ -179,10 +179,24 @@
             border-color: rgba(100, 255, 100, 0.5);
         }
         
-        /* Desktop'ta kontrolleri gizle */
-        @media (min-width: 768px) {
+        /* Desktop'ta kontrolleri gizle - TABLET/iPAD İÇİN DÜZELTME! */
+        /* Touch olmayan cihazlarda gizle (hover capability = desktop) */
+        @media (hover: hover) and (pointer: fine) {
             #cameraBtn, #steeringPad, #accelPad {
-                display: none;
+                display: none !important;
+            }
+        }
+
+        /* Fallback: Tablet/iPad'lerde görünür kalması için */
+        @media (max-width: 1024px) and (orientation: portrait) {
+            #cameraBtn, #steeringPad, #accelPad {
+                display: flex !important;
+            }
+        }
+
+        @media (max-width: 1366px) and (orientation: landscape) {
+            #cameraBtn, #steeringPad, #accelPad {
+                display: flex !important;
             }
         }
     </style>
@@ -220,6 +234,8 @@
     <script>
         // 📱 MOBİL CIHAZ TESPİTİ
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        const isTablet = /iPad|Android/i.test(navigator.userAgent) && window.innerWidth >= 768;
+        const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
         
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 4000);
@@ -234,8 +250,8 @@
             alpha: false
         });
         
-        // 📱 ULTRA SHARP RENDERING - Görsel çözünürlük artışı!
-        const pixelRatio = isMobile ? 1.5 : Math.min(window.devicePixelRatio, 2.5);  // 2 → 2.5!
+        // 📱 OPTIMIZED PIXEL RATIO - Mobilde 1.0 = native çözünürlük, performans dengesi!
+        const pixelRatio = isMobile ? 1.0 : Math.min(window.devicePixelRatio, 2.0);
         renderer.setPixelRatio(pixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         
@@ -252,8 +268,8 @@
         
         document.body.appendChild(renderer.domElement);
         
-        // 🚗 PROFESYONEL CubeCamera - Aynalar için!
-        const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(isMobile ? 256 : 512, {
+        // 🚗 PROFESYONEL CubeCamera - Aynalar için! - 📱 MOBİLDE KULLANILMIYOR!
+        const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(isMobile ? 128 : 512, {
             format: THREE.RGBAFormat,  // RGBA = smooth!
             generateMipmaps: true,
             minFilter: THREE.LinearMipmapLinearFilter,
@@ -265,8 +281,8 @@
         const cubeCamera = new THREE.CubeCamera(0.1, 1000, cubeRenderTarget);
         scene.add(cubeCamera);
         
-        // 🛣️ Road CubeCamera - SWEET SPOT: 3072 (net + performanslı!)
-        const roadCubeRenderTarget = new THREE.WebGLCubeRenderTarget(isMobile ? 768 : 3072, {
+        // 🛣️ Road CubeCamera - SWEET SPOT: 3072 (net + performanslı!) - 📱 MOBİLDE KULLANILMIYOR!
+        const roadCubeRenderTarget = new THREE.WebGLCubeRenderTarget(isMobile ? 256 : 3072, {
             format: THREE.RGBAFormat,
             generateMipmaps: true,
             minFilter: THREE.LinearMipmapLinearFilter,
@@ -458,8 +474,10 @@
             float fbm(vec2 st, int octaves) {
                 float value = 0.0;
                 float amplitude = 0.6;
+                // 📱 MOBILE OPTIMIZATION: Max 1 octave on mobile devices
+                int maxOctaves = min(octaves, 1);
                 for (int i = 0; i < 8; i++) {
-                    if (i >= octaves) break;
+                    if (i >= maxOctaves) break;
                     value += amplitude * noise(st);
                     st *= 2.2;
                     amplitude *= 0.55;
@@ -613,7 +631,7 @@
 
         // 📱 MOBİL HAFIZA YÖNETİMİ - Sadece aktif texture'ları yükle!
         let activeTextureIndices = new Set();
-        const MAX_LOADED_TEXTURES = isMobile ? 10 : 50;  // 📱 Mobilde MAX 10 texture!
+        const MAX_LOADED_TEXTURES = isMobile ? 5 : 50;  // 📱 Mobilde MAX 5 texture (ultra optimized)!
         
         function loadFluidTextures() {
             
@@ -706,13 +724,13 @@
         
         // 📱 LAZY LOADING - Mobilde texture'ları MASTER QUEUE sırasına göre yükle!
         let lazyLoadPosition = 2;  // İlk 2'yi zaten yükledik
-        
+
         function loadTexturesLazy() {
-            // 🎯 Sıradaki 10 texture'ı MASTER QUEUE'dan al
-            for (let i = 0; i < 10 && lazyLoadPosition < masterUniverseQueue.length; i++) {
+            // 🎯 Sıradaki 3 texture'ı MASTER QUEUE'dan al (10 → 3: daha yavaş yükleme!)
+            for (let i = 0; i < 3 && lazyLoadPosition < masterUniverseQueue.length; i++) {
                 const index = masterUniverseQueue[lazyLoadPosition];
                 lazyLoadPosition++;
-                
+
                 if (!universeTextures[index]) {
                     loadUniverseTexture(index);
                 }
@@ -736,9 +754,9 @@
                 
                 universeTextures[index] = texture;
                 activeTextureIndices.add('u' + index);
-                
-                // 🎯 Her 8 texture'da yeni batch yükle!
-                if (lazyLoadPosition < masterUniverseQueue.length && lazyLoadPosition % 8 === 0) {
+
+                // 🎯 Her 5 texture'da yeni batch yükle! (8 → 5: daha sık kontrol)
+                if (lazyLoadPosition < masterUniverseQueue.length && lazyLoadPosition % 5 === 0) {
                     loadTexturesLazy();
                 }
             });
@@ -863,7 +881,7 @@
             // 📱 İlk pour texture
             currentPourIndex = masterPourQueue[0];
 
-            const skyboxGeometry = new THREE.SphereGeometry(3000, isMobile ? 64 : 128, isMobile ? 64 : 128);  // 🎯 Daha yüksek segment = yumuşak geçişler!
+            const skyboxGeometry = new THREE.SphereGeometry(3000, isMobile ? 32 : 128, isMobile ? 32 : 128);  // 📱 Mobilde 32 segment = ultra performans!
             
             fluidMaterial = new THREE.ShaderMaterial({
                 uniforms: {
@@ -1019,8 +1037,8 @@
         const mainLight = new THREE.DirectionalLight(0xffffff, 3.0);
         mainLight.position.set(200, 250, 200);
         mainLight.castShadow = true;
-        mainLight.shadow.mapSize.width = isMobile ? 4096 : 8192;  // 🎯 2048→4096 (mobil), 4096→8192 (desktop) ULTRA!
-        mainLight.shadow.mapSize.height = isMobile ? 4096 : 8192;
+        mainLight.shadow.mapSize.width = isMobile ? 2048 : 8192;  // 📱 Mobilde 2048 = optimal performans!
+        mainLight.shadow.mapSize.height = isMobile ? 2048 : 8192;
         mainLight.shadow.camera.far = 1000;
         mainLight.shadow.camera.left = -250;
         mainLight.shadow.camera.right = 250;
@@ -1145,7 +1163,7 @@
         let mirrorMeshes = [];
         let mirrorsLoaded = 0;
         let mirrorsCreated = 0;
-        const TOTAL_MIRRORS = isMobile ? 40 : 58;  // 📱 Mobilde 40 ayna - hala çok güzel!
+        const TOTAL_MIRRORS = isMobile ? 30 : 58;  // 📱 Mobilde 30 ayna = optimal performans!
 
         const roadData = {
             "version": "10.0",
@@ -1332,28 +1350,36 @@
                                 
                                 if (isRoad) {
                                     // 🛣️ YOL - ULTRA SHARP MIRROR!
-                                    mat.metalness = 1.0;          // 0.98 → 1.0 (TAM METALİK = daha keskin!)
-                                    mat.roughness = 0.0;          // 0.02 → 0.0 (SIFIR roughness = maksimum netlik!)
+                                    mat.metalness = isMobile ? 0.85 : 1.0;  // 📱 Mobilde biraz azalt
+                                    mat.roughness = isMobile ? 0.05 : 0.0;   // 📱 Mobilde hafif roughness
                                     mat.ior = 2.417;              // CAM IOR
-                                    mat.reflectivity = 1.0;       // 0.95 → 1.0 (maksimum yansıma!)
-                                    
-                                    mat.clearcoat = 1.0;          // 0.95 → 1.0 (tam parlak!)
-                                    mat.clearcoatRoughness = 0.0; // 0.02 → 0.0 (kristal berraklık!)
-                                    
-                                    // 🛣️ ULTRA GÜÇLÜ YANSIMA!
-                                    mat.envMap = roadCubeRenderTarget.texture;
-                                    mat.envMapIntensity = 7.0;    // 6.0 → 7.0 (daha güçlü!)
-                                    
+                                    mat.reflectivity = isMobile ? 0.85 : 1.0;  // 📱 Mobilde biraz azalt
+
+                                    mat.clearcoat = isMobile ? 0.85 : 1.0;  // 📱 Mobilde biraz azalt
+                                    mat.clearcoatRoughness = isMobile ? 0.05 : 0.0;  // 📱 Mobilde hafif roughness
+
+                                    // 🛣️ GÜÇLÜ YANSIMA! - 📱 Mobilde fake reflection (statik)
+                                    if (isMobile) {
+                                        // 📱 MOBİL: Statik fake reflection - CubeCamera yok!
+                                        mat.envMap = null;
+                                        mat.envMapIntensity = 0;
+                                        // Metalness ve clearcoat ile yeterli parlak görünüm
+                                    } else {
+                                        // 🖥️ DESKTOP: Realtime CubeCamera reflection
+                                        mat.envMap = roadCubeRenderTarget.texture;
+                                        mat.envMapIntensity = 7.0;
+                                    }
+
                                     // 🔥 ULTRA HIGH QUALITY FILTERING + SHARPNESS!
                                     if (mat.map) {
-                                        mat.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                                        mat.map.anisotropy = isMobile ? 2 : renderer.capabilities.getMaxAnisotropy();
                                         mat.map.minFilter = THREE.LinearMipmapLinearFilter;
                                         mat.map.magFilter = THREE.LinearFilter;
                                         mat.map.generateMipmaps = true;
                                     }
-                                    
-                                    // 🔥 envMap ULTRA SHARP QUALITY!
-                                    if (roadCubeRenderTarget.texture) {
+
+                                    // 🔥 envMap ULTRA SHARP QUALITY! (sadece desktop)
+                                    if (!isMobile && roadCubeRenderTarget.texture) {
                                         roadCubeRenderTarget.texture.minFilter = THREE.LinearMipmapLinearFilter;
                                         roadCubeRenderTarget.texture.magFilter = THREE.LinearFilter;
                                         roadCubeRenderTarget.texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -2216,6 +2242,17 @@
         };
 
         function setupControls() {
+            // 📱 TABLET/iPAD KONTROL GÖRÜNÜRLÜĞÜ - Touch cihazlarda kesinlikle göster!
+            if (hasTouch || isMobile) {
+                const cameraBtn = document.getElementById('cameraBtn');
+                const steeringPad = document.getElementById('steeringPad');
+                const accelPad = document.getElementById('accelPad');
+
+                if (cameraBtn) cameraBtn.style.display = 'flex';
+                if (steeringPad) steeringPad.style.display = 'block';
+                if (accelPad) accelPad.style.display = 'block';
+            }
+
             // 🥽 VR OTOMATİK ALGILAMA - Sadece VR varsa göster!
             const vrBtn = document.getElementById('vrBtn');
             if (vrBtn && navigator.xr) {
@@ -2773,23 +2810,23 @@
                 obj.mesh.rotation.y += obj.rotationSpeed;
             });
             
-            // 🪞 Mirror update - HER 6 FRAME (balanced!)
-            if (car && mirrorMeshes.length > 0 && frameCounter % 6 === 0) {
+            // 🪞 Mirror update - HER 6 FRAME (balanced!) - 📱 MOBİLDE KAPALI!
+            if (!isMobile && car && mirrorMeshes.length > 0 && frameCounter % 6 === 0) {
                 mirrorMeshes.forEach(mesh => mesh.visible = false);
-                
+
                 cubeCamera.position.copy(car.position);
                 cubeCamera.position.y += 3;
-                
+
                 if (fluidSkybox && fluidSkybox.material) {
                     fluidSkybox.material.side = THREE.DoubleSide;
                 }
-                
+
                 cubeCamera.update(renderer, scene);
-                
+
                 if (fluidSkybox && fluidSkybox.material) {
                     fluidSkybox.material.side = THREE.BackSide;
                 }
-                
+
                 mirrorMeshes.forEach(mesh => mesh.visible = true);
             }
             
@@ -2800,33 +2837,33 @@
                 smoothRoadCameraPos.lerp(targetPos, roadCameraLerpFactor);
             }
             
-            // 🛣️ Road camera update - AKILLI SPEED-BASED UPDATE!
+            // 🛣️ Road camera update - AKILLI SPEED-BASED UPDATE! - 📱 MOBİLDE KAPALI (fake reflection)!
             const speed = Math.abs(carSpeed);
             const isMoving = speed > 0.01;
             const updateFreq = isMoving ? 2 : 4;  // Hızlıyken her 2 frame, duruyorsa her 4 frame!
-            
-            if (car && trackMesh && frameCounter % updateFreq === 0) {
+
+            if (!isMobile && car && trackMesh && frameCounter % updateFreq === 0) {
                 // 🎯 1. YOL + AYNALAR + ARABA GİZLE!
                 trackMesh.visible = false;
                 mirrorMeshes.forEach(mesh => mesh.visible = false);
                 if (car) car.visible = false;
-                
+
                 // 🎯 2. SMOOTH POZİSYON UYGULA!
                 roadCubeCamera.position.copy(smoothRoadCameraPos);
-                
+
                 // 🎯 3. SKYBOX DOUBLESIDE
                 if (fluidSkybox && fluidSkybox.material) {
                     fluidSkybox.material.side = THREE.DoubleSide;
                 }
-                
+
                 // 🎯 4. GÜNCELLE - Sadece skybox!
                 roadCubeCamera.update(renderer, scene);
-                
+
                 // 🎯 5. SKYBOX BACKSIDE
                 if (fluidSkybox && fluidSkybox.material) {
                     fluidSkybox.material.side = THREE.BackSide;
                 }
-                
+
                 // 🎯 6. YOL + AYNALAR + ARABA görünür!
                 trackMesh.visible = true;
                 mirrorMeshes.forEach(mesh => mesh.visible = true);
